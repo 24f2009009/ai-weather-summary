@@ -29,11 +29,34 @@ cd tds_AI_weather_report_summarizer
 pip install -r requirements.txt
 ```
 
-3. Set up environment variables:
+3. Set up environment variables securely:
 ```bash
-# Create .env file
+# Create .env file with restricted permissions
+touch .env
+chmod 600 .env
+
+# Add your API key (never commit this file)
 echo "GOOGLE_API_KEY=your_api_key_here" > .env
 ```
+
+### Security Considerations
+
+1. **API Key Protection**:
+   - Keep your `.env` file secure with restricted permissions
+   - Never commit API keys to version control
+   - Use different API keys for development and production
+   - Rotate API keys periodically
+
+2. **Production Deployment**:
+   - Use secrets management services (e.g., AWS Secrets Manager, HashiCorp Vault)
+   - Enable HTTPS/TLS in production
+   - Set appropriate CORS policies
+   - Implement rate limiting for API endpoints
+
+3. **Monitoring**:
+   - Monitor API usage and set up alerts for unusual patterns
+   - Track API key usage and implement quota management
+   - Log access patterns (without sensitive data)
 
 ## Running the Server
 

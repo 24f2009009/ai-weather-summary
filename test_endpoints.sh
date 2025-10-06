@@ -7,8 +7,41 @@
 
 set -u
 
+# Security checks
+check_env_security() {
+  local env_file=".env"
+  if [ -f "$env_file" ]; then
+    local perms
+    perms=$(stat -f "%Lp" "$env_file" 2>/dev/null || stat -c "%a" "$env_file" 2>/dev/null)
+    if [ "$perms" != "600" ]; then
+      printf "\nWARNING: .env file permissions are not secure (found: %s, expected: 600)\n" "$perms"
+      printf "Run: chmod 600 .env\n\n"
+    fi
+  fi
+}
+
+# Environment validation
+validate_environment() {
+  if [ ! -f ".env" ]; then
+    printf "ERROR: .env file not found. Please create it with your API key.\n"
+    return 1
+  fi
+  
+  if [ ! -f "requirements.txt" ]; then
+    printf "ERROR: requirements.txt not found. Please ensure you're in the correct directory.\n"
+    return 1
+  fi
+}
+
 BASE_URL=${BASE_URL:-http://127.0.0.1:8000}
 PID_FILE=".test_server_pid"
+LOG_FILE=".test_server.log"
+
+# Run security checks
+check_env_security
+
+# Validate environment
+validate_environment || exit 1
 
 has_cmd() {
   command -v "$1" >/dev/null 2>&1
@@ -72,8 +105,20 @@ do_request() {
 
 start_server_bg() {
   if [ "${NO_START:-0}" = "1" ]; then
-    echo "NO_START=1 — not attempting to start the server."
+    printf "NO_START=1 — not attempting to start the server.\n"
     return 1
+  fi
+
+  # Check for existing process
+  if [ -f "$PID_FILE" ]; then
+    local old_pid
+    old_pid=$(cat "$PID_FILE")
+    if ps -p "$old_pid" >/dev/null 2>&1; then
+      printf "WARNING: Server already running with PID %s\n" "$old_pid"
+      return 0
+    else
+      rm -f "$PID_FILE"
+    fi
   fi
 
   if has_cmd python3; then
@@ -106,16 +151,38 @@ start_server_bg() {
   return 3
 }
 
+# Cleanup function for proper server shutdown
 cleanup_started_server() {
   if [ -f "$PID_FILE" ]; then
+    local pid
     pid=$(cat "$PID_FILE")
     if [ -n "$pid" ] && ps -p "$pid" >/dev/null 2>&1; then
-      echo "Stopping server started by this script (pid $pid)..."
-      kill "$pid" || echo "Failed to kill pid $pid"
+      printf "Stopping server (pid %s)...\\n" "$pid"
+      kill "$pid"
+      
+      # Wait for process to stop
+      local i
+      for i in {1..5}; do
+        if ! ps -p "$pid" >/dev/null 2>&1; then
+          break
+        fi
+        sleep 1
+      done
+      
+      # Force kill if still running
+      if ps -p "$pid" >/dev/null 2>&1; then
+        printf "Server still running, forcing shutdown...\\n"
+        kill -9 "$pid" || printf "Failed to force kill pid %s\\n" "$pid"
+      fi
     fi
     rm -f "$PID_FILE"
   fi
+  # Clean up log file
+  [ -f "$LOG_FILE" ] && rm -f "$LOG_FILE"
 }
+
+# Set up trap for cleanup on script exit
+trap cleanup_started_server EXIT
 
 echo "Testing API at: $BASE_URL"
 
@@ -148,7 +215,15 @@ do_request POST "/weather-summary" "$INVALID_LAT"
 MISSING_FIELD='{"latitude":45.0}'
 do_request POST "/weather-summary" "$MISSING_FIELD"
 
-echo "\nTests finished."
+printf "\n======================\nTest Summary\n======================\n"
+printf "Total Tests Run: 5\n"
+printf "Failed Tests: %s\n" "$FAILURES"
+if [ "$FAILURES" -eq 0 ]; then
+  printf "✅ All tests passed!\n"
+else
+  printf "❌ Some tests failed\n"
+fi
+printf "======================\n"
 
 # If we started the server, offer to stop it
 if [ -f "$PID_FILE" ]; then
