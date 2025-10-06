@@ -11,11 +11,20 @@ warnings.filterwarnings("ignore", message="Field name .* shadows an attribute in
 
 from google import genai
 
-# Load environment variables
+# Load environment variables from .env file
 load_dotenv()
 
-# Initialize Gemini client
-client = genai.Client()
+# Initialize Gemini client directly from environment
+# This avoids storing the API key in an intermediate variable
+try:
+    if not os.getenv("GOOGLE_API_KEY"):
+        raise ValueError("GOOGLE_API_KEY environment variable is not set")
+    client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+    # Clear any loaded API key from error messages/traces
+    os.environ["GOOGLE_API_KEY"] = "[FILTERED]"
+except Exception as e:
+    # Avoid logging the actual error which might contain the key
+    raise RuntimeError("Failed to initialize Gemini client. Check your API key configuration.") from None
 
 app = FastAPI(
     title="Weather Summary API",
@@ -115,11 +124,15 @@ Weather Data:
             model="gemini-2.5-flash",
             contents=prompt
         )
+        if not response or not response.text:
+            raise ValueError("Empty response from Gemini API")
         return response.text
     except Exception as e:
+        # Log the actual error securely (you should add proper logging here)
+        # but return a generic message to the client
         raise HTTPException(
             status_code=503,
-            detail=f"Failed to get LLM summary: {str(e)}"
+            detail="Failed to generate weather summary. Please try again later."
         )
 
 
