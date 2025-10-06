@@ -2,10 +2,45 @@
 # Test script for Weather Summary API endpoints
 # Usage:
 #   ./test_endpoints.sh            # uses default BASE_URL http://127.0.0.1:8000
-#   BASE_URL=http://localhost:8000 ./test_endpoints.sh
-#   NO_START=1 ./test_endpoints.sh  # don't attempt to start the server if down
+#   ./test_endpoints.sh --prod      # test production deployment
+#   ./test_endpoints.sh --local     # explicitly test local server
+#   BASE_URL=<custom-url> ./test_endpoints.sh  # test custom deployment
+#   NO_START=1 ./test_endpoints.sh  # don't attempt to start local server
 
 set -u
+
+# Deployment URLs
+LOCAL_URL="http://127.0.0.1:8000"
+PROD_URL="https://ai-weather-summary.onrender.com"
+
+# Parse command line arguments
+parse_args() {
+  for arg in "$@"; do
+    case "$arg" in
+      --prod)
+        export BASE_URL="$PROD_URL"
+        export NO_START=1  # Don't start local server when testing prod
+        return 0
+        ;;
+      --local)
+        export BASE_URL="$LOCAL_URL"
+        return 0
+        ;;
+      --help)
+        printf "Usage:\n"
+        printf "  ./test_endpoints.sh            # test local server\n"
+        printf "  ./test_endpoints.sh --prod     # test production deployment\n"
+        printf "  ./test_endpoints.sh --local    # explicitly test local\n"
+        printf "  BASE_URL=<url> ./test_endpoints.sh  # test custom deployment\n"
+        exit 0
+        ;;
+    esac
+  done
+  return 0
+}
+
+# Process arguments
+parse_args "$@"
 
 # Security checks
 check_env_security() {
@@ -70,9 +105,9 @@ do_request() {
   # Append status code on a new line for easy parsing
   local resp
   if [ -n "$data" ]; then
-    resp=$(curl -s -H "Content-Type: application/json" -X "$method" "$BASE_URL$path" -d "$data" -w "\n%{http_code}")
+    resp=$(curl -sk -H "Content-Type: application/json" -X "$method" "$BASE_URL$path" -d "$data" -w "\n%{http_code}")
   else
-    resp=$(curl -s -X "$method" "$BASE_URL$path" -w "\n%{http_code}")
+    resp=$(curl -sk -X "$method" "$BASE_URL$path" -w "\n%{http_code}")
   fi
 
   local status=$(echo "$resp" | tail -n1)
@@ -137,13 +172,17 @@ start_server_bg() {
   echo "$pid" > "$PID_FILE"
   echo "Server started (pid $pid). Waiting for health endpoint..."
 
-  # wait up to 12 seconds for server to become healthy
-  for i in {1..12}; do
+  # wait up to 30 seconds for server to become healthy (longer for cloud deployments)
+  for i in {1..30}; do
     sleep 1
-    code=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/health" || echo "000")
+    code=$(curl -sk -o /dev/null -w "%{http_code}" "$BASE_URL/health" || echo "000")
     if [ "$code" = "200" ]; then
       echo "Server is healthy."
       return 0
+    fi
+    printf "."
+    if [ $((i % 10)) -eq 0 ]; then
+      printf " %ds\n" "$i"
     fi
   done
 
@@ -187,7 +226,7 @@ trap cleanup_started_server EXIT
 echo "Testing API at: $BASE_URL"
 
 # Check basic connectivity
-health_code=$(curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/health" || echo "000")
+health_code=$(curl -sk -o /dev/null -w "%{http_code}" "$BASE_URL/health" || echo "000")
 if [ "$health_code" != "200" ]; then
   echo "Health check returned $health_code."
   start_server_bg || echo "Continuing without starting server. Some tests may fail."
