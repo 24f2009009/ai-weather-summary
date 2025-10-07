@@ -1,9 +1,7 @@
 from fastapi import FastAPI, HTTPException, Request, Form
 from fastapi.templating import Jinja2Templates
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, RedirectResponse
 from datetime import datetime
-from jinja2 import Environment, select_autoescape
 from pydantic import BaseModel, Field, field_validator
 import requests
 from typing import Optional
@@ -36,9 +34,6 @@ app = FastAPI(
     description="Fetch weather data and get AI-powered summaries",
     version="1.0.0"
 )
-
-# Mount static files directory
-app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Initialize templates with custom filters
 templates = Jinja2Templates(directory="templates")
