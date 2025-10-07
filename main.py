@@ -1,4 +1,9 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Form
+from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse, RedirectResponse
+from datetime import datetime
+from jinja2 import Environment, select_autoescape
 from pydantic import BaseModel, Field, field_validator
 import requests
 from typing import Optional
@@ -31,6 +36,18 @@ app = FastAPI(
     description="Fetch weather data and get AI-powered summaries",
     version="1.0.0"
 )
+
+# Mount static files directory
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Initialize templates with custom filters
+templates = Jinja2Templates(directory="templates")
+
+# Add custom Jinja2 filters
+def nl2br(text):
+    return text.replace('\n', '<br>')
+
+templates.env.filters['nl2br'] = nl2br
 
 # Pydantic models for request/response validation
 class WeatherRequest(BaseModel):
@@ -121,7 +138,7 @@ Weather Data:
     
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-2.5-pro",
             contents=prompt
         )
         if not response or not response.text:
@@ -137,9 +154,17 @@ Weather Data:
 
 
 # API Endpoints
-@app.get("/")
-async def root():
-    """Root endpoint with API information."""
+@app.get("/", response_class=HTMLResponse)
+async def root(request: Request):
+    """Serve the home page with weather summary form."""
+    return templates.TemplateResponse(
+        "home.html",
+        {"request": request}
+    )
+
+@app.get("/api")
+async def api_info():
+    """API information endpoint."""
     return {
         "message": "Weather Summary API",
         "version": "1.0.0",
@@ -156,23 +181,59 @@ async def health_check():
     return {"status": "healthy"}
 
 
-@app.post("/weather-summary", response_model=WeatherSummary)
-async def get_weather_summary(request: WeatherRequest):
+@app.post("/weather-summary")
+async def get_weather_summary(
+    request: Request,
+    latitude: float = Form(...),
+    longitude: float = Form(...)
+):
     """
-    Get AI-powered weather summary for given coordinates.
+    Get AI-powered weather summary for given coordinates and render the summary template.
     
     Args:
-        request: WeatherRequest with latitude and longitude
+        request: FastAPI request object
+        latitude: Latitude coordinate from form
+        longitude: Longitude coordinate from form
         
     Returns:
-        WeatherSummary: Contains AI summary and weather data
+        TemplateResponse: Rendered summary template
     """
-    # Fetch weather data from Open-Meteo
-    weather_data = fetch_weather_data(request.latitude, request.longitude)
-    
-    # Get LLM summary
-    summary = get_llm_summary(weather_data, request.latitude, request.longitude)
-    
+    try:
+        # Validate coordinates
+        if not -90 <= latitude <= 90:
+            raise ValueError("Latitude must be between -90 and 90")
+        if not -180 <= longitude <= 180:
+            raise ValueError("Longitude must be between -180 and 180")
+
+        # Fetch weather data from Open-Meteo
+        weather_data = fetch_weather_data(latitude, longitude)
+        
+        # Get LLM summary
+        summary = get_llm_summary(weather_data, latitude, longitude)
+        
+        # Render the summary template
+        return templates.TemplateResponse(
+            "summary.html",
+            {
+                "request": request,
+                "summary": summary,
+                "latitude": latitude,
+                "longitude": longitude,
+                "timestamp": datetime.utcnow()
+            }
+        )
+    except ValueError as e:
+        # Redirect back to home with error
+        return RedirectResponse(
+            url=f"/?error={str(e)}",
+            status_code=303
+        )
+    except Exception as e:
+        # Redirect back to home with error
+        return RedirectResponse(
+            url="/?error=Failed to generate weather summary. Please try again.",
+            status_code=303
+        )
     # Return just the summary
     return WeatherSummary(summary=summary)
 
